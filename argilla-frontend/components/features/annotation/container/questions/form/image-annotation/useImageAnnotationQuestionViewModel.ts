@@ -3,7 +3,7 @@ import { useImageAnnotationSharedState } from "../../../fields/image-annotation/
 import { Question } from "~/v1/domain/entities/question/Question";
 import { ImageAnnotationQuestionAnswer } from "~/v1/domain/entities/question/QuestionAnswer";
 
-type Tool = "rectangle" | "polygon";
+type Tool = "rectangle" | "polygon" | "mask";
 
 export const useImageAnnotationQuestionViewModel = (props: {
   question: Question;
@@ -72,8 +72,8 @@ export const useImageAnnotationQuestionViewModel = (props: {
   };
 
   const selectTool = (tool: Tool) => {
-    // Signal to field component to cancel any ongoing polygon drawing
-    if (selectedTool.value === "polygon" && tool !== "polygon") {
+    // Signal to field component to cancel any ongoing drawing when switching tools
+    if (selectedTool.value !== tool) {
       sharedState.cancelPolygonTrigger.value++;
     }
 
@@ -200,12 +200,28 @@ export const useImageAnnotationQuestionViewModel = (props: {
     }
   };
 
+  const brushSize = computed(() => sharedState.brushSize.value);
+  const brushMode = computed(() => sharedState.brushMode.value);
+
+  const onBrushSizeChange = (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    sharedState.brushSize.value = Number(target.value);
+  };
+
+  const setBrushMode = (mode: "brush" | "eraser") => {
+    sharedState.brushMode.value = mode;
+  };
+
   return {
     selectedTool,
     hoveredAnnotation,
     expandedAnnotations,
     annotations,
     editModeActive,
+    brushSize,
+    brushMode,
+    onBrushSizeChange,
+    setBrushMode,
     selectTool,
     onLabelSelected,
     onFocus,

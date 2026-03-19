@@ -83,8 +83,11 @@
           <div class="context-menu-item" @click.stop="handleContextMenuEdit">
             <span v-text="$t('imageAnnotation.contextMenu.edit')" />
           </div>
-          <div class="context-menu-item" @click.stop="handleContextMenuAddHole">
+          <div v-if="contextMenu.annotationIndex !== null && annotations[contextMenu.annotationIndex] && annotations[contextMenu.annotationIndex].shape_type !== 'mask'" class="context-menu-item" @click.stop="handleContextMenuAddHole">
             <span v-text="$t('imageAnnotation.contextMenu.addHole')" />
+          </div>
+          <div v-if="contextMenu.annotationIndex !== null && annotations[contextMenu.annotationIndex] && annotations[contextMenu.annotationIndex].shape_type === 'mask'" class="context-menu-item" @click.stop="handleContextMenuConvertToPolygon">
+            <span>Convert to Polygon</span>
           </div>
           <div class="context-menu-item context-menu-item--delete" @click.stop="handleContextMenuDelete">
             <span v-text="$t('imageAnnotation.contextMenu.delete')" />

@@ -429,6 +429,7 @@ export class ImageAnnotationQuestionAnswer extends QuestionAnswer {
       group_id: value.group_id,
       flags: value.flags,
       holes: value.holes,
+      ...(value.mask_data ? { mask_data: value.mask_data } : {}),
     }));
   }
 

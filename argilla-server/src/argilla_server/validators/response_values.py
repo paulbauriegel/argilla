@@ -325,7 +325,10 @@ class ImageAnnotationQuestionResponseValueValidator:
     def _validate_shape_types_are_allowed(
         self, image_annotation_question_settings: ImageAnnotationQuestionSettings
     ) -> None:
-        allowed_shapes = image_annotation_question_settings.shape_types
+        allowed_shapes = list(image_annotation_question_settings.shape_types)
+        # Always allow mask shape type (may be missing in older datasets)
+        if "mask" not in allowed_shapes:
+            allowed_shapes.append("mask")
 
         for value_item in self._response_value:
             if value_item.shape_type not in allowed_shapes:

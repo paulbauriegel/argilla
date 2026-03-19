@@ -5,6 +5,8 @@ export type ImageAnnotationSharedState = {
   editModeActive: Ref<boolean>;
   currentAnnotationIndex: Ref<number | null>;
   selectedTool: Ref<string>;
+  brushSize: Ref<number>;
+  brushMode: Ref<"brush" | "eraser">;
   // Counter-based signals - increment to trigger action
   cancelPolygonTrigger: Ref<number>;
   reassignLabelTrigger: Ref<number>;
@@ -40,6 +42,8 @@ export const useImageAnnotationSharedState = (
       editModeActive: ref(false),
       currentAnnotationIndex: ref<number | null>(null),
       selectedTool: ref("rectangle"),
+      brushSize: ref(10),
+      brushMode: ref("brush"),
       // Counter-based signals
       cancelPolygonTrigger: ref(0),
       reassignLabelTrigger: ref(0),

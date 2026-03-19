@@ -3,6 +3,7 @@ import { getAnnotationNodes } from "../utils/konvaShapes";
 import { getCanvasCoordinates } from "../utils/coordinates";
 import { AnnotationToolFactory } from "../tools/AnnotationToolFactory";
 import { ImageAnnotationAnswer } from "~/v1/domain/entities/IAnswer";
+import { decodeMaskRLEToCanvas } from "../utils/maskStorage";
 
 export interface AnchorConfig {
   annotationIndex: number;
@@ -192,6 +193,102 @@ export class AnnotationRenderer {
   }
 
   /**
+   * Parse a color string (hex or HSL) to RGB components
+   */
+  private static colorToRgb(color: string): { r: number; g: number; b: number } {
+    // Try hex first
+    const hexResult = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
+    if (hexResult) {
+      return {
+        r: parseInt(hexResult[1], 16),
+        g: parseInt(hexResult[2], 16),
+        b: parseInt(hexResult[3], 16),
+      };
+    }
+
+    // Try HSL: hsl(h, s%, l%) or hsl(h,s%,l%)
+    const hslResult = /hsl\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%\s*\)/i.exec(color);
+    if (hslResult) {
+      const h = parseInt(hslResult[1]) / 360;
+      const s = parseInt(hslResult[2]) / 100;
+      const l = parseInt(hslResult[3]) / 100;
+
+      if (s === 0) {
+        const v = Math.round(l * 255);
+        return { r: v, g: v, b: v };
+      }
+
+      const hue2rgb = (p: number, q: number, t: number) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      };
+
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      return {
+        r: Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+        g: Math.round(hue2rgb(p, q, h) * 255),
+        b: Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+      };
+    }
+
+    return { r: 200, g: 200, b: 200 };
+  }
+
+  /**
+   * Render mask annotation (synchronous for RLE format)
+   */
+  private renderMaskAnnotation(
+    annotation: ImageAnnotationAnswer,
+    index: number,
+    color: string,
+    attachContextMenuHandler: (
+      element: Konva.Node,
+      annotationIndex: number,
+      holeIndex?: number
+    ) => void
+  ) {
+    if (!this.deps.annotationLayer || !this.deps.imageNode || !annotation.mask_data) {
+      return;
+    }
+
+    if (annotation.mask_data.format !== "rle") {
+      console.warn("Only RLE mask format is supported for rendering");
+      return;
+    }
+
+    const rgb = AnnotationRenderer.colorToRgb(color);
+    const maskCanvas = decodeMaskRLEToCanvas(annotation.mask_data, rgb);
+
+    // Position the mask to cover the entire image (mask canvas is at image resolution)
+    const imgNode = this.deps.imageNode;
+    const x = imgNode.x();
+    const y = imgNode.y();
+    const width = imgNode.width();
+    const height = imgNode.height();
+
+    const konvaImage = new Konva.Image({
+      id: `annotation-${index}`,
+      name: "annotation-shape",
+      image: maskCanvas,
+      x,
+      y,
+      width,
+      height,
+      opacity: 0.5,
+      listening: true,
+    });
+
+    this.attachHoverHandlers(konvaImage, index);
+    attachContextMenuHandler(konvaImage, index);
+    this.deps.annotationLayer.add(konvaImage);
+  }
+
+  /**
    * Render all annotations on the canvas
    */
   renderAnnotations(
@@ -215,6 +312,13 @@ export class AnnotationRenderer {
     // Render each annotation
     annotations.forEach((annotation, index) => {
       const color = this.deps.getAnnotationColor(annotation.label);
+      
+      // Handle mask annotations separately
+      if (annotation.shape_type === "mask") {
+        this.renderMaskAnnotation(annotation, index, color, attachContextMenuHandler);
+        return;
+      }
+      
       const canvasPoints = getCanvasCoordinates(
         annotation.points,
         this.deps.imageNode

@@ -12,6 +12,13 @@ export type ImageAnnotationHole = {
   flags?: Record<string, any>;
 };
 
+export type MaskData = {
+  format: "rle" | "png_base64";
+  data: string;
+  width: number;
+  height: number;
+};
+
 export type ImageAnnotationAnswer = {
   label: string;
   points: number[][];
@@ -19,6 +26,7 @@ export type ImageAnnotationAnswer = {
   group_id?: number;
   flags?: Record<string, any>;
   holes?: ImageAnnotationHole[];
+  mask_data?: MaskData;
 };
 
 export type AnswerCombinations =

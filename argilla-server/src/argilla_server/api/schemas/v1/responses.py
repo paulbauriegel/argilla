@@ -55,6 +55,14 @@ class SpanQuestionResponseValueItem(BaseModel):
         return instance
 
 
+class MaskData(BaseModel):
+    """Binary mask data for mask annotations"""
+    format: Literal["rle", "png_base64"] = Field(..., description="Mask data format")
+    data: str = Field(..., description="Encoded mask data (RLE string or base64 PNG)")
+    width: int = Field(..., description="Mask width in pixels")
+    height: int = Field(..., description="Mask height in pixels")
+
+
 class ImageAnnotationHole(BaseModel):
     """Hole/exclusion within an image annotation shape"""
     points: List[List[float]] = Field(..., description="Coordinates in [[x1,y1], [x2,y2], ...] format")
@@ -94,10 +102,11 @@ class ImageAnnotationQuestionResponseValueItem(BaseModel):
     """Image annotation in labelme format"""
     label: str
     points: List[List[float]] = Field(..., description="Coordinates in [[x1,y1], [x2,y2], ...] format")
-    shape_type: str = Field(..., description="Shape type: rectangle, polygon, circle, line, point")
+    shape_type: str = Field(..., description="Shape type: rectangle, polygon, circle, line, point, mask")
     group_id: Optional[int] = None
     flags: Optional[Dict[str, Any]] = Field(default_factory=dict)
     holes: Optional[List[ImageAnnotationHole]] = Field(default=None, description="Holes/exclusions within the shape")
+    mask_data: Optional[MaskData] = Field(default=None, description="Binary mask data for mask shape type")
 
     @model_validator(mode="after")
     @classmethod
@@ -125,6 +134,13 @@ class ImageAnnotationQuestionResponseValueItem(BaseModel):
             raise ValueError("polygon shape requires at least 3 points")
         elif shape_type == "circle" and len(points) != 2:
             raise ValueError("circle shape requires exactly 2 points (center and edge)")
+        elif shape_type == "mask":
+            if len(points) != 2:
+                raise ValueError("mask shape requires exactly 2 points (bounding box)")
+            if instance.mask_data is None:
+                raise ValueError("mask shape requires mask_data field")
+            if instance.mask_data.format not in ["rle", "png_base64"]:
+                raise ValueError(f"mask_data format must be 'rle' or 'png_base64', got '{instance.mask_data.format}'")
         
         # Validate holes if present
         if holes is not None:

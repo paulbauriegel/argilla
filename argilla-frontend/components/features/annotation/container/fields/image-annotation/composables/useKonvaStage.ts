@@ -6,9 +6,9 @@ import Konva from "konva";
  */
 export const initKonvaStage = (
   container: HTMLDivElement,
-  onMouseDown?: () => void,
-  onMouseMove?: () => void,
-  onMouseUp?: () => void
+  onMouseDown?: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void,
+  onMouseMove?: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void,
+  onMouseUp?: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void
 ) => {
   const containerWidth = container.offsetWidth;
   const containerHeight = container.offsetHeight || 500;
@@ -24,6 +24,11 @@ export const initKonvaStage = (
 
   stage.add(imageLayer);
   stage.add(annotationLayer);
+
+  // Prevent browser default context menu so Konva shape contextmenu events work
+  stage.on("contextmenu", (e) => {
+    e.evt.preventDefault();
+  });
 
   // Setup event handlers
   if (onMouseDown) {

@@ -14,6 +14,7 @@ export interface ContextMenuActions {
   onEdit: (annotationIndex: number) => void;
   onAddHole: (annotationIndex: number) => void;
   onDeleteHole: (annotationIndex: number, holeIndex: number) => void;
+  onConvertToPolygon?: (annotationIndex: number) => void;
 }
 
 /**
@@ -107,6 +108,16 @@ export const useContextMenu = (actions?: ContextMenuActions) => {
   };
 
   /**
+   * Handle convert mask to polygon action from context menu
+   */
+  const handleConvertToPolygon = () => {
+    if (state.value.annotationIndex !== null && actions?.onConvertToPolygon) {
+      actions.onConvertToPolygon(state.value.annotationIndex);
+      hide();
+    }
+  };
+
+  /**
    * Attach context menu handler to a Konva element
    * This creates the right-click behavior for annotations
    */
@@ -147,6 +158,7 @@ export const useContextMenu = (actions?: ContextMenuActions) => {
     handleEdit,
     handleAddHole,
     handleDeleteHole,
+    handleConvertToPolygon,
     attachContextMenuHandler,
   };
 };

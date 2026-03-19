@@ -1,6 +1,7 @@
 import { IAnnotationTool, ToolContext } from "./IAnnotationTool";
 import { RectangleTool } from "./RectangleTool";
 import { PolygonTool } from "./PolygonTool";
+import { MaskTool } from "./MaskTool";
 
 /**
  * Factory for creating annotation tools
@@ -17,6 +18,7 @@ export class AnnotationToolFactory {
   private initializeTools(): void {
     this.tools.set("rectangle", new RectangleTool(this.context));
     this.tools.set("polygon", new PolygonTool(this.context));
+    this.tools.set("mask", new MaskTool(this.context));
   }
 
   /**

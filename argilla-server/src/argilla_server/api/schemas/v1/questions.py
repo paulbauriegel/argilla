@@ -286,8 +286,8 @@ class ImageAnnotationQuestionSettings(BaseModel):
     visible_options: Optional[int] = None
     # Allow multiple shapes per annotation
     allow_multiple: bool = Field(default=True, description="Allow multiple annotations")
-    # Supported shape types: rectangle (bbox), polygon, circle, line, point
-    shape_types: List[str] = Field(default=["rectangle", "polygon"], description="Allowed shape types")
+    # Supported shape types: rectangle (bbox), polygon, circle, line, point, mask
+    shape_types: List[str] = Field(default=["rectangle", "polygon", "mask"], description="Allowed shape types")
 
 
 class ImageAnnotationQuestionSettingsCreate(UniqueValuesCheckerMixin):
@@ -300,7 +300,7 @@ class ImageAnnotationQuestionSettingsCreate(UniqueValuesCheckerMixin):
     )
     visible_options: Optional[int] = Field(None, ge=IMAGE_ANNOTATION_MIN_VISIBLE_OPTIONS)
     allow_multiple: bool = True
-    shape_types: List[str] = Field(default=["rectangle", "polygon"])
+    shape_types: List[str] = Field(default=["rectangle", "polygon", "mask"])
 
     @model_validator(mode="after")
     @classmethod
@@ -322,7 +322,7 @@ class ImageAnnotationQuestionSettingsCreate(UniqueValuesCheckerMixin):
     def check_shape_types(
         cls, instance: "ImageAnnotationQuestionSettingsCreate"
     ) -> "ImageAnnotationQuestionSettingsCreate":
-        allowed_shapes = {"rectangle", "polygon", "circle", "line", "point"}
+        allowed_shapes = {"rectangle", "polygon", "circle", "line", "point", "mask"}
         for shape in instance.shape_types:
             if shape not in allowed_shapes:
                 raise ValueError(

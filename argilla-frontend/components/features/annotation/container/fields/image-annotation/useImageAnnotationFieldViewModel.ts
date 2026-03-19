@@ -13,6 +13,8 @@ import { completeHoleCreation } from "./utils/holeCreationUtils";
 import { AnnotationToolFactory } from "./tools/AnnotationToolFactory";
 import { ToolContext } from "./tools/IAnnotationTool";
 import { ToolInteraction, InteractionContext } from "./tools/IToolInteraction";
+import { MaskInteraction } from "./tools/MaskInteraction";
+import { maskToPolygonPoints } from "./utils/maskToPolygon";
 import { Question } from "~/v1/domain/entities/question/Question";
 import { ImageAnnotationQuestionAnswer } from "~/v1/domain/entities/question/QuestionAnswer";
 import { useNotifications } from "~/v1/infrastructure/services/useNotifications";
@@ -204,6 +206,13 @@ export const useImageAnnotationFieldViewModel = (props: {
     }
 
     mode.value = { kind: "drawing" };
+
+    // For tools that need the initial pointer-down event (e.g. mask/brush),
+    // fire it immediately so the first stroke is painted.
+    if (activeInteraction.value && activeInteraction.value.toolType === "mask") {
+      const result = activeInteraction.value.onPointerDown(pos);
+      handleInteractionResult(result);
+    }
   };
 
   const isPointWithinParent = (
@@ -226,8 +235,25 @@ export const useImageAnnotationFieldViewModel = (props: {
     const annotation = activeInteraction.value.complete();
 
     if (annotation) {
-      // Normal annotation creation
-      answer.values.push(annotation);
+      // Check if we're editing an existing mask annotation
+      const editingMaskIndex =
+        editMode.value.active &&
+        editMode.value.annotationIndex !== null &&
+        activeInteraction.value.toolType === "mask"
+          ? editMode.value.annotationIndex
+          : -1;
+
+      if (editingMaskIndex >= 0) {
+        // Replace the existing annotation in-place
+        answer.values[editingMaskIndex] = annotation;
+        // Exit edit mode
+        sharedState.editModeActive.value = false;
+        sharedState.currentAnnotationIndex.value = null;
+        (answer as any).editModeState = false;
+      } else {
+        // Normal annotation creation — push new
+        answer.values.push(annotation);
+      }
       updateAnswer();
     } else if (
       activeInteraction.value.isHole &&
@@ -270,6 +296,38 @@ export const useImageAnnotationFieldViewModel = (props: {
    */
   const cancelInteraction = () => {
     if (!activeInteraction.value) return;
+
+    // For mask interactions, always auto-complete (save) instead of discarding
+    if (activeInteraction.value.toolType === "mask") {
+      const isMaskEdit =
+        editMode.value.active &&
+        editMode.value.annotationIndex !== null;
+
+      if (isMaskEdit) {
+        // Edit mode: replace existing annotation in-place
+        const editingIndex = editMode.value.annotationIndex!;
+        const result = activeInteraction.value.complete();
+        if (result && editingIndex >= 0) {
+          answer.values[editingIndex] = result;
+        }
+        sharedState.editModeActive.value = false;
+        sharedState.currentAnnotationIndex.value = null;
+        (answer as any).editModeState = false;
+        restoreAllAnnotations();
+      } else {
+        // Normal drawing: save as new annotation
+        const result = activeInteraction.value.complete();
+        if (result) {
+          answer.values.push(result);
+        }
+      }
+      activeInteraction.value.cleanup();
+      activeInteraction.value = null;
+      mode.value = { kind: "idle" };
+      updateAnswer();
+      renderAnnotations();
+      return;
+    }
 
     activeInteraction.value.cancel();
     activeInteraction.value = null;
@@ -344,6 +402,51 @@ export const useImageAnnotationFieldViewModel = (props: {
       sharedState.selectLabelTrigger.value++;
     }
 
+    // For mask annotations, enter a drawing interaction on the existing mask
+    if (annotation && annotation.shape_type === "mask" && annotation.mask_data) {
+      // Hide the rendered mask shape so the preview replaces it
+      const shapeNode = annotationLayer?.findOne(
+        `#annotation-${annotationIndex}`
+      );
+      if (shapeNode) shapeNode.hide();
+
+      // Fade other annotations
+      fadeNonEditedAnnotations(annotationIndex);
+
+      // Create a MaskInteraction preloaded with the existing mask data
+      const img = imageNode?.image() as HTMLImageElement | undefined;
+      if (img && imageNode) {
+        const imageWidth = img.naturalWidth || img.width;
+        const imageHeight = img.naturalHeight || img.height;
+        const color = getAnnotationColor(annotation.label);
+        const label = answer.options.find(
+          (opt) => opt.value === annotation.label
+        );
+
+        const interaction = new MaskInteraction(
+          getInteractionContext(),
+          label ? { value: label.value, color: label.color || color } : undefined,
+          imageWidth,
+          imageHeight,
+          sharedState.brushSize.value,
+          sharedState.brushMode.value,
+          color
+        );
+        interaction.loadMaskData(annotation.mask_data);
+
+        activeInteraction.value = interaction;
+        // Switch mode to drawing so pointer events are dispatched to the interaction
+        mode.value = { kind: "drawing" };
+
+        // Switch the UI tool to mask so brush controls are shown
+        sharedState.selectedTool.value = "mask";
+      }
+
+      contextMenu.hide();
+      annotationLayer?.batchDraw();
+      return;
+    }
+
     // Move edited shape to top of z-order (so it receives events first)
     const shapeNode = annotationLayer?.findOne(
       `#annotation-${annotationIndex}`
@@ -372,6 +475,19 @@ export const useImageAnnotationFieldViewModel = (props: {
   };
 
   const exitEditMode = () => {
+    // If there's an active mask drawing interaction from mask edit, auto-complete
+    // it so the user's edits are saved.
+    if (activeInteraction.value && activeInteraction.value.toolType === "mask") {
+      const editingIndex = editMode.value.annotationIndex;
+      const result = activeInteraction.value.complete();
+      if (result && editingIndex !== null && editingIndex >= 0) {
+        answer.values[editingIndex] = result;
+        updateAnswer();
+      }
+      activeInteraction.value.cleanup();
+      activeInteraction.value = null;
+    }
+
     if (editMode.value.annotationIndex !== null) {
       highlightAnnotation(editMode.value.annotationIndex, false);
     }
@@ -436,6 +552,10 @@ export const useImageAnnotationFieldViewModel = (props: {
   };
 
   const enterHoleDrawingMode = (parentIndex: number) => {
+    // Masks cannot have holes
+    const targetAnnotation = annotations.value[parentIndex];
+    if (targetAnnotation && targetAnnotation.shape_type === "mask") return;
+
     // Cancel any ongoing drawing
     if (activeInteraction.value) {
       cancelInteraction();
@@ -671,7 +791,11 @@ export const useImageAnnotationFieldViewModel = (props: {
   };
 
   // Handle mouse events
-  const handleMouseDown = () => {
+  const handleMouseDown = (e: any) => {
+    // Ignore right-click for drawing (allow context menu to work naturally)
+    const nativeEvent = e?.evt;
+    if (nativeEvent && nativeEvent.button !== undefined && nativeEvent.button !== 0) return;
+
     const pos = stage?.getPointerPosition();
     if (!pos) return;
 
@@ -685,14 +809,14 @@ export const useImageAnnotationFieldViewModel = (props: {
     }
   };
 
-  const handleMouseMove = () => {
+  const handleMouseMove = (e: any) => {
     const pos = stage?.getPointerPosition();
     if (!pos || !activeInteraction.value) return;
 
     activeInteraction.value.onPointerMove(pos);
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: any) => {
     const pos = stage?.getPointerPosition();
     if (!pos || !activeInteraction.value) return;
 
@@ -714,12 +838,45 @@ export const useImageAnnotationFieldViewModel = (props: {
     });
   };
 
+  /**
+   * Convert a mask annotation to a polygon annotation in-place.
+   */
+  const convertMaskToPolygon = (annotationIndex: number) => {
+    const annotation = annotations.value[annotationIndex];
+    console.log("[convertMaskToPolygon] index:", annotationIndex, "annotation:", annotation);
+    console.log("[convertMaskToPolygon] shape_type:", annotation?.shape_type, "has mask_data:", !!annotation?.mask_data);
+    if (!annotation || annotation.shape_type !== "mask" || !annotation.mask_data) {
+      console.warn("[convertMaskToPolygon] Skipped: not a mask or no mask_data");
+      return;
+    }
+
+    console.log("[convertMaskToPolygon] mask_data format:", annotation.mask_data.format, "size:", annotation.mask_data.width, "x", annotation.mask_data.height, "data length:", annotation.mask_data.data?.length);
+    const points = maskToPolygonPoints(annotation.mask_data);
+    console.log("[convertMaskToPolygon] extracted points:", points?.length ?? "null");
+    if (!points || points.length < 3) {
+      notification.notify({
+        message: "Could not convert mask to polygon — mask may be too small or empty",
+        type: "warning",
+      });
+      return;
+    }
+
+    // Replace the annotation in-place
+    annotation.shape_type = "polygon";
+    annotation.points = points;
+    delete (annotation as any).mask_data;
+
+    updateAnswer();
+    renderAnnotations();
+  };
+
   // Initialize composables after all functions are declared
   // Context menu (consolidated state + handlers)
   const contextMenu = useContextMenu({
     onDelete: deleteShape,
     onEdit: enterEditMode,
     onAddHole: enterHoleDrawingMode,
+    onConvertToPolygon: convertMaskToPolygon,
     onDeleteHole: (annotationIndex, holeIndex) => {
       const annotation = annotations.value[annotationIndex];
       if (annotation && annotation.holes && annotation.holes[holeIndex]) {
@@ -782,10 +939,15 @@ export const useImageAnnotationFieldViewModel = (props: {
     }
   );
 
-  // Watch for cancel polygon signal from question component
+  // Watch for cancel/switch-tool signal from question component
   watch(sharedState.cancelPolygonTrigger, () => {
     if (activeInteraction.value) {
-      cancelInteraction();
+      // Auto-complete mask interactions so the user doesn't lose their work
+      if (activeInteraction.value.toolType === "mask") {
+        completeInteraction();
+      } else {
+        cancelInteraction();
+      }
     }
   });
 
@@ -886,6 +1048,45 @@ export const useImageAnnotationFieldViewModel = (props: {
     }
   });
 
+  // Watch for label changes: auto-complete active mask interaction when label switches
+  watch(selectedLabel, (newLabel, oldLabel) => {
+    if (
+      activeInteraction.value &&
+      activeInteraction.value.toolType === "mask" &&
+      newLabel?.value !== oldLabel?.value
+    ) {
+      completeInteraction();
+    }
+  });
+
+  // Watch for brush size changes
+  watch(() => sharedState.brushSize.value, (newSize) => {
+    if (selectedTool.value === "mask" && toolFactory) {
+      const maskTool = toolFactory.getTool("mask");
+      if (maskTool && 'setBrushSize' in maskTool) {
+        (maskTool as any).setBrushSize(newSize);
+      }
+      // Update active interaction if drawing
+      if (activeInteraction.value && 'setBrushSize' in activeInteraction.value) {
+        (activeInteraction.value as any).setBrushSize(newSize);
+      }
+    }
+  });
+
+  // Watch for brush mode changes
+  watch(() => sharedState.brushMode.value, (newMode) => {
+    if (selectedTool.value === "mask" && toolFactory) {
+      const maskTool = toolFactory.getTool("mask");
+      if (maskTool && 'setBrushMode' in maskTool) {
+        (maskTool as any).setBrushMode(newMode);
+      }
+      // Update active interaction if drawing
+      if (activeInteraction.value && 'setBrushMode' in activeInteraction.value) {
+        (activeInteraction.value as any).setBrushMode(newMode);
+      }
+    }
+  });
+
   // Watch for hole drawing mode signal from question component
   watch(sharedState.holeDrawingMode, (holeMode, oldHoleMode) => {
     // Enter hole drawing mode when activated from question component
@@ -913,11 +1114,20 @@ export const useImageAnnotationFieldViewModel = (props: {
 
   stage?.destroy();
 
+  const contextMenuAnnotationIsMask = computed(() => {
+    const idx = contextMenu.state.value.annotationIndex;
+    if (idx === null || idx === undefined) return false;
+    const ann = annotations.value[idx];
+    return ann?.shape_type === "mask";
+  });
+
   return {
     canvasContainer,
     imageLoaded,
     hasError,
     contextMenu: contextMenu.state,
+    contextMenuAnnotationIsMask,
+    annotations,
     editMode,
     holeDrawingMode: computed(() => sharedState.holeDrawingMode.value),
     deleteShape,
@@ -925,6 +1135,7 @@ export const useImageAnnotationFieldViewModel = (props: {
     handleContextMenuEdit: contextMenu.handleEdit,
     handleContextMenuAddHole: contextMenu.handleAddHole,
     handleContextMenuDeleteHole: contextMenu.handleDeleteHole,
+    handleContextMenuConvertToPolygon: contextMenu.handleConvertToPolygon,
     enterEditMode,
     exitEditMode,
     exitHoleDrawingMode,

@@ -19,9 +19,53 @@
             :title="tool.label"
             :disabled="editModeActive"
           >
-            <span class="tool-icon">{{ tool.icon }}</span>
+            <span class="tool-icon"><svgicon :name="tool.icon" width="14" height="14" /></span>
             <span class="tool-label">{{ tool.label }}</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Brush Controls (shown when mask tool is selected) -->
+      <div v-if="selectedTool === 'mask'" class="image-annotation-question__brush-controls">
+        <h4 class="section-title">Brush Settings</h4>
+        <div class="brush-controls">
+          <div class="brush-size-control">
+            <label class="brush-label">
+              Brush Size: <span class="brush-value">{{ brushSize }}px</span>
+            </label>
+            <input
+              type="range"
+              min="5"
+              max="50"
+              step="1"
+              :value="brushSize"
+              @input="onBrushSizeChange($event)"
+              class="brush-slider"
+            />
+          </div>
+          <div class="brush-mode-control">
+            <label class="brush-label">Mode:</label>
+            <div class="brush-mode-buttons">
+              <button
+                class="brush-mode-button"
+                :class="{ 'brush-mode-button--active': brushMode === 'brush' }"
+                @click="setBrushMode('brush')"
+                title="Brush mode (B)"
+              >
+                <svgicon name="brush" width="14" height="14" />
+                Brush
+              </button>
+              <button
+                class="brush-mode-button"
+                :class="{ 'brush-mode-button--active': brushMode === 'eraser' }"
+                @click="setBrushMode('eraser')"
+                title="Eraser mode (E)"
+              >
+                <svgicon name="eraser" width="14" height="14" />
+                Eraser
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -57,9 +101,9 @@
                 @mouseenter="hoverAnnotation(index)"
                 @mouseleave="unhoverAnnotation()"
               >
-                <!-- Expand/Collapse Button (only if has holes) -->
+                <!-- Expand/Collapse Button (only if has holes, not for masks) -->
                 <button
-                  v-if="annotation.holes && annotation.holes.length > 0"
+                  v-if="annotation.shape_type !== 'mask' && annotation.holes && annotation.holes.length > 0"
                   class="annotation-expand"
                   @click.stop="toggleExpanded(index)"
                   :title="isExpanded(index) ? $t('imageAnnotation.buttons.collapse') : $t('imageAnnotation.buttons.expand')"
@@ -77,7 +121,7 @@
                 
                 <!-- Hole Count Badge -->
                 <span
-                  v-if="annotation.holes && annotation.holes.length > 0"
+                  v-if="annotation.shape_type !== 'mask' && annotation.holes && annotation.holes.length > 0"
                   class="annotation-hole-badge"
                   :title="$tc('imageAnnotation.tooltips.holesCount', annotation.holes.length, { count: annotation.holes.length })"
                 >
@@ -86,9 +130,9 @@
                 </span>
                 
                 <div class="annotation-actions">
-                  <!-- Add Hole Button -->
+                  <!-- Add Hole Button (not for masks) -->
                   <button
-                    v-if="!annotation.holes || annotation.holes.length < 10"
+                    v-if="annotation.shape_type !== 'mask' && (!annotation.holes || annotation.holes.length < 10)"
                     class="annotation-add-hole"
                     @click.stop="onAddHole(index)"
                     :title="$t('imageAnnotation.buttons.addHole')"
@@ -123,9 +167,9 @@
                 </div>
               </div>
               
-              <!-- Holes List (expandable) -->
+              <!-- Holes List (expandable, not for masks) -->
               <div
-                v-if="annotation.holes && annotation.holes.length > 0"
+                v-if="annotation.shape_type !== 'mask' && annotation.holes && annotation.holes.length > 0"
                 v-show="isExpanded(index)"
                 class="holes-list"
               >
@@ -182,8 +226,9 @@ export default {
   data() {
     return {
       tools: [
-        { type: "rectangle", icon: "▭", label: "Rectangle" },
-        { type: "polygon", icon: "⬡", label: "Polygon" },
+        { type: "rectangle", icon: "square", label: "Rectangle" },
+        { type: "polygon", icon: "heptagon", label: "Polygon" },
+        { type: "mask", icon: "brush", label: "Brush/Mask" },
       ],
     };
   },
@@ -219,7 +264,8 @@ export default {
 
   &__tools,
   &__labels,
-  &__annotations {
+  &__annotations,
+  &__brush-controls {
     display: flex;
     flex-direction: column;
     gap: $base-space * 1.5;
@@ -230,6 +276,127 @@ export default {
     border-radius: $border-radius-s;
     max-height: 300px;
     overflow-y: auto;
+  }
+}
+
+.brush-controls {
+  display: flex;
+  flex-direction: column;
+  gap: $base-space * 1.5;
+  padding: $base-space * 1.5;
+  background: var(--bg-opacity-8);
+  border-radius: $border-radius-s;
+}
+
+.brush-size-control {
+  display: flex;
+  flex-direction: column;
+  gap: $base-space;
+}
+
+.brush-label {
+  font-size: 13px;
+  color: var(--fg-primary);
+  font-weight: 500;
+}
+
+.brush-value {
+  font-weight: 600;
+  color: var(--bg-brand);
+}
+
+.brush-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: #4a4a5a;
+  outline: none;
+  cursor: pointer;
+  margin: 4px 0;
+
+  &::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 3px;
+    background: #4a4a5a;
+  }
+
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--bg-brand);
+    cursor: pointer;
+    margin-top: -6px;
+    transition: all 0.2s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+
+    &:hover {
+      transform: scale(1.2);
+    }
+  }
+
+  &::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: #4a4a5a;
+    border: none;
+  }
+
+  &::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--bg-brand);
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+
+    &:hover {
+      transform: scale(1.2);
+    }
+  }
+}
+
+.brush-mode-control {
+  display: flex;
+  flex-direction: column;
+  gap: $base-space;
+}
+
+.brush-mode-buttons {
+  display: flex;
+  gap: $base-space;
+}
+
+.brush-mode-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: $base-space * 0.5;
+  padding: $base-space $base-space * 1.5;
+  background: var(--bg-opacity-8);
+  border: 1px solid var(--border-field);
+  border-radius: $border-radius-s;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+  color: var(--fg-primary);
+
+  &:hover {
+    background: var(--bg-opacity-16);
+  }
+
+  &--active {
+    background: var(--bg-brand);
+    color: white;
+    border-color: var(--bg-brand);
   }
 }
 
