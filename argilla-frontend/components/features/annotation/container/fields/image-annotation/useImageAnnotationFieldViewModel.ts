@@ -851,9 +851,9 @@ export const useImageAnnotationFieldViewModel = (props: {
     }
 
     console.log("[convertMaskToPolygon] mask_data format:", annotation.mask_data.format, "size:", annotation.mask_data.width, "x", annotation.mask_data.height, "data length:", annotation.mask_data.data?.length);
-    const points = maskToPolygonPoints(annotation.mask_data);
-    console.log("[convertMaskToPolygon] extracted points:", points?.length ?? "null");
-    if (!points || points.length < 3) {
+    const result = maskToPolygonPoints(annotation.mask_data);
+    console.log("[convertMaskToPolygon] extracted points:", result?.points?.length ?? "null", "holes:", result?.holes?.length ?? 0);
+    if (!result || result.points.length < 3) {
       notification.notify({
         message: "Could not convert mask to polygon — mask may be too small or empty",
         type: "warning",
@@ -863,7 +863,10 @@ export const useImageAnnotationFieldViewModel = (props: {
 
     // Replace the annotation in-place
     annotation.shape_type = "polygon";
-    annotation.points = points;
+    annotation.points = result.points;
+    if (result.holes && result.holes.length > 0) {
+      annotation.holes = result.holes;
+    }
     delete (annotation as any).mask_data;
 
     updateAnswer();

@@ -1,61 +1,128 @@
-import { MaskData } from "~/v1/domain/entities/IAnswer";
+import { contours } from "d3-contour";
+import { MaskData, ImageAnnotationHole } from "~/v1/domain/entities/IAnswer";
 import { decodeMaskRLE } from "./maskStorage";
 
+export type MaskToPolygonResult = {
+  points: number[][];
+  holes?: ImageAnnotationHole[];
+};
+
 /**
- * Convert a mask annotation (RLE) into polygon points by extracting boundary
- * pixels, sorting them angularly around the centroid, and simplifying.
+ * Convert a mask annotation (RLE) into polygon points using marching squares
+ * contour extraction (d3-contour). Properly handles concave shapes and holes.
  *
- * Returns an array of [x, y] points in image-pixel coordinates,
- * or null if the mask is empty / conversion fails.
+ * Returns the outer polygon points and any holes, or null if the mask is
+ * empty / conversion fails.
  */
 export function maskToPolygonPoints(
   maskData: MaskData
-): number[][] | null {
+): MaskToPolygonResult | null {
   if (maskData.format !== "rle") return null;
 
   const { width, height } = maskData;
   const mask = decodeMaskRLE(maskData.data, width, height);
 
-  // Collect boundary pixels: filled pixels with at least one empty 4-neighbour
-  const boundary: number[][] = [];
-  let sumX = 0;
-  let sumY = 0;
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (mask[y * width + x] === 0) continue;
-      // Check 4-connected neighbours
-      const top = y > 0 ? mask[(y - 1) * width + x] : 0;
-      const bot = y < height - 1 ? mask[(y + 1) * width + x] : 0;
-      const lft = x > 0 ? mask[y * width + (x - 1)] : 0;
-      const rgt = x < width - 1 ? mask[y * width + (x + 1)] : 0;
-      if (top === 0 || bot === 0 || lft === 0 || rgt === 0) {
-        boundary.push([x, y]);
-        sumX += x;
-        sumY += y;
-      }
+  // Convert to 0/1 values for d3-contour (it expects values[i + j*n])
+  const values = new Array(width * height);
+  for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i++) {
+      values[i + j * width] = mask[j * width + i] > 0 ? 1 : 0;
     }
   }
 
-  if (boundary.length < 3) return null;
+  // Extract contours at threshold 1 using marching squares
+  const contourGenerator = contours()
+    .size([width, height])
+    .smooth(false)
+    .thresholds([1]);
 
-  // Sort boundary pixels by angle from centroid
-  const cx = sumX / boundary.length;
-  const cy = sumY / boundary.length;
+  const contourResults = contourGenerator(values);
+  if (!contourResults || contourResults.length === 0) return null;
 
-  boundary.sort((a, b) => {
-    const angleA = Math.atan2(a[1] - cy, a[0] - cx);
-    const angleB = Math.atan2(b[1] - cy, b[0] - cx);
-    return angleA - angleB;
-  });
+  // The result for threshold=1 is a single GeoJSON MultiPolygon
+  const geometry = contourResults[0];
+  if (
+    !geometry ||
+    !geometry.coordinates ||
+    geometry.coordinates.length === 0
+  ) {
+    return null;
+  }
 
-  // Simplify with Douglas-Peucker
+  // Each element in coordinates is a polygon: [outerRing, ...holeRings]
+  // Pick the polygon with the largest outer ring (by absolute area)
+  let bestPolygon: number[][][] | null = null;
+  let bestArea = 0;
+
+  for (const polygon of geometry.coordinates) {
+    if (!polygon || polygon.length === 0) continue;
+    const outerRing = polygon[0];
+    const area = Math.abs(ringArea(outerRing));
+    if (area > bestArea) {
+      bestArea = area;
+      bestPolygon = polygon;
+    }
+  }
+
+  if (!bestPolygon || bestPolygon.length === 0) return null;
+
   const epsilon = Math.max(width, height) * 0.005;
-  const simplified = douglasPeucker(boundary, epsilon);
 
-  if (simplified.length < 3) return null;
+  // Process the outer ring
+  const outerRing = bestPolygon[0];
+  const outerPoints = simplifyRing(outerRing, epsilon);
+  if (outerPoints.length < 3) return null;
 
-  return simplified;
+  // Process hole rings
+  const holes: ImageAnnotationHole[] = [];
+  for (let i = 1; i < bestPolygon.length; i++) {
+    const holeRing = bestPolygon[i];
+    const holePoints = simplifyRing(holeRing, epsilon);
+    if (holePoints.length >= 3) {
+      holes.push({
+        points: holePoints,
+        shape_type: "polygon",
+      });
+    }
+  }
+
+  // Also collect holes from other (smaller) polygons in the MultiPolygon —
+  // these are disjoint outer regions we treat as additional contours.
+  // For now we only return the largest polygon + its holes, which covers
+  // the vast majority of real-world mask shapes.
+
+  const result: MaskToPolygonResult = { points: outerPoints };
+  if (holes.length > 0) {
+    result.holes = holes;
+  }
+
+  return result;
+}
+
+/**
+ * Convert a GeoJSON ring (array of [x,y] with closing duplicate) into
+ * simplified [x,y] points suitable for annotation.
+ */
+function simplifyRing(ring: number[][], epsilon: number): number[][] {
+  // GeoJSON rings are closed (first === last), remove the closing point
+  let points = ring.slice(0, -1);
+  if (points.length < 3) return points;
+
+  points = douglasPeucker(points, epsilon);
+  return points;
+}
+
+/**
+ * Signed area of a ring (Shoelace formula).
+ * Positive for CCW, negative for CW.
+ */
+function ringArea(ring: number[][]): number {
+  let area = 0;
+  const n = ring.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    area += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+  }
+  return area / 2;
 }
 
 /**
