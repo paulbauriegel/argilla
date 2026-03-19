@@ -1,0 +1,142 @@
+[project]
+name = "argilla-ai-assist"
+dynamic = ["version"]
+description = "AI prediction service for Argilla using SAM3 model"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+keywords = [
+    "ai",
+    "computer-vision",
+    "segmentation",
+    "sam3",
+    "argilla",
+    "machine-learning",
+]
+authors = [{ name = "argilla", email = "contact@argilla.io" }]
+maintainers = [{ name = "argilla", email = "contact@argilla.io" }]
+dependencies = [
+    # Web framework
+    "fastapi ~= 0.115.0",
+    "pydantic ~= 2.9.0",
+    "pydantic-settings ~= 2.6.0",
+    "uvicorn[standard] ~= 0.32.0",
+    # Image processing and ML
+    "torch",
+    "transformers>=4.60.0",
+    "huggingface_hub>=0.26.2",
+    "pillow >= 10.4.0",
+    # Auth and security
+    "python-jose[cryptography] ~= 3.3.0",
+    "bcrypt ~= 4.2.0",
+    # Database (for shared auth)
+    "SQLAlchemy ~= 2.0.0",
+    "aiosqlite == 0.20.0",
+    # HTTP client for testing
+    "httpx ~= 0.27.0",
+    # Required by fastapi
+    "python-multipart ~= 0.0.16",
+    "torchvision>=0.22.0",
+    "greenlet>=3.3.2",
+    "requests>=2.32.5",
+]
+
+[project.optional-dependencies]
+postgresql = [
+    "psycopg2 ~= 2.9.0",
+    # Async PostgreSQL
+    "asyncpg ~= 0.30.0",
+]
+
+[project.urls]
+homepage = "https://www.argilla.io"
+documentation = "https://docs.argilla.io"
+repository = "https://github.com/argilla-io/argilla"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+excludes = [".env.dev"]
+
+[tool.pdm.version]
+source = "file"
+path = "src/argilla_ai_assist/_version.py"
+
+[tool.pdm.dev-dependencies]
+test = [
+    "pytest>=7.4.4",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "pytest-asyncio~=0.21.1",
+    "httpx>=0.26.0",
+]
+
+[tool.pytest.ini_options]
+log_format = "%(asctime)s %(name)s %(levelname)s %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+log_cli = "True"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+concurrency = ["greenlet", "thread", "multiprocessing"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "if _TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+]
+
+[tool.isort]
+profile = "black"
+
+[tool.ruff]
+# Ignore line length violations
+ignore = ["E501"]
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+]
+line-length = 120
+
+[tool.ruff.per-file-ignores]
+# Ignore imported but unused;
+"__init__.py" = ["F401"]
+
+[tool.black]
+line-length = 120
+
+[tool.pdm.scripts]
+_.env_file = ".env.dev"
+server = { cmd = "uvicorn argilla_ai_assist:app --port 6950 --reload" }
+test = { cmd = "pytest", env_file = ".env.test" }
