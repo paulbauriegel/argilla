@@ -58,11 +58,16 @@ class SAM3Backend(BaseBackend):
         
         # Determine device
         if settings.device == "auto":
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                self._device = "cuda"
+            elif torch.backends.mps.is_available():
+                self._device = "mps"
+            else:
+                self._device = "cpu"
         else:
             self._device = settings.device
         
-        _LOGGER.info(f"Using device: {self._device}")
+        _LOGGER.warning(f"Using device: {self._device}")
         
         try:
             # Load PCS model (text + box prompts)

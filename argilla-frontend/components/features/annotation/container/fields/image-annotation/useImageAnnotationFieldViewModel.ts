@@ -15,6 +15,7 @@ import { ToolContext } from "./tools/IAnnotationTool";
 import { ToolInteraction, InteractionContext } from "./tools/IToolInteraction";
 import { MaskInteraction } from "./tools/MaskInteraction";
 import { maskToPolygonPoints } from "./utils/maskToPolygon";
+import { pngBase64ToCanvas, createMaskDataFromCanvas, calculateMaskBoundingBox } from "./utils/maskStorage";
 import { Question } from "~/v1/domain/entities/question/Question";
 import { ImageAnnotationQuestionAnswer } from "~/v1/domain/entities/question/QuestionAnswer";
 import { useNotifications } from "~/v1/infrastructure/services/useNotifications";
@@ -776,6 +777,9 @@ export const useImageAnnotationFieldViewModel = (props: {
         originalImageWidth = originalWidth;
         originalImageHeight = originalHeight;
 
+        // Store image content in shared state for AI mask requests
+        sharedState.imageContent.value = content;
+
         // Initialize renderer AFTER imageNode is available
         // This ensures coordinate transformations work correctly
         initializeRenderer();
@@ -1088,6 +1092,123 @@ export const useImageAnnotationFieldViewModel = (props: {
         (activeInteraction.value as any).setBrushMode(newMode);
       }
     }
+  });
+
+  // Watch for AI mask load signal from question component
+  watch(sharedState.loadAiMaskTrigger, () => {
+    const maskData = sharedState.loadAiMaskData.value;
+    if (!maskData || !imageNode || !annotationLayer) return;
+
+    // Cancel any ongoing interaction
+    if (activeInteraction.value) {
+      cancelInteraction();
+    }
+
+    // Exit edit mode if active
+    if (editMode.value.active) {
+      exitEditMode();
+    }
+
+    // Switch to mask tool
+    sharedState.selectedTool.value = "mask";
+
+    const img = imageNode.image() as HTMLImageElement;
+    if (!img) return;
+
+    const imageWidth = img.naturalWidth || img.width;
+    const imageHeight = img.naturalHeight || img.height;
+
+    const label = answer.options.find(
+      (opt) => opt.value === maskData.label
+    );
+    const color = maskData.color || getAnnotationColor(maskData.label);
+
+    const interaction = new MaskInteraction(
+      getInteractionContext(),
+      label ? { value: label.value, color: label.color || color } : { value: maskData.label, color },
+      imageWidth,
+      imageHeight,
+      sharedState.brushSize.value,
+      sharedState.brushMode.value,
+      color
+    );
+
+    // Load the AI-generated mask as png_base64
+    interaction.loadMaskData({
+      format: "png_base64",
+      data: maskData.maskBase64,
+      width: imageWidth,
+      height: imageHeight,
+    });
+
+    activeInteraction.value = interaction;
+    mode.value = { kind: "drawing" };
+  });
+
+  // Watch for batch AI mask commit signal from question component
+  watch(sharedState.commitAiMasksTrigger, async () => {
+    const masksData = sharedState.commitAiMasksData.value;
+    if (!masksData || masksData.length === 0 || !imageNode) return;
+
+    // Cancel any ongoing interaction
+    if (activeInteraction.value) {
+      cancelInteraction();
+    }
+
+    // Exit edit mode if active
+    if (editMode.value.active) {
+      exitEditMode();
+    }
+
+    const img = imageNode.image() as HTMLImageElement;
+    if (!img) return;
+
+    const imageWidth = img.naturalWidth || img.width;
+    const imageHeight = img.naturalHeight || img.height;
+
+    // Process each mask: decode PNG → remap RGB→alpha → RLE MaskData → annotation
+    // The backend returns white-on-black PNGs (alpha=255 everywhere, mask info
+    // is in RGB channels). createMaskDataFromCanvas reads the alpha channel,
+    // so we must move the luminance into alpha first.
+    for (const maskItem of masksData) {
+      try {
+        const canvas = await pngBase64ToCanvas(maskItem.maskBase64, imageWidth, imageHeight);
+        const ctx = canvas.getContext("2d")!;
+        const imgData = ctx.getImageData(0, 0, imageWidth, imageHeight);
+        for (let i = 0; i < imgData.data.length; i += 4) {
+          const maskVal = Math.max(imgData.data[i], imgData.data[i + 1], imgData.data[i + 2]);
+          imgData.data[i] = 255;
+          imgData.data[i + 1] = 255;
+          imgData.data[i + 2] = 255;
+          imgData.data[i + 3] = maskVal;
+        }
+        ctx.putImageData(imgData, 0, 0);
+
+        const maskDataRle = createMaskDataFromCanvas(canvas, "rle");
+        const boundingBox = calculateMaskBoundingBox(canvas);
+
+        // Skip empty masks
+        if (
+          boundingBox[0][0] === boundingBox[1][0] &&
+          boundingBox[0][1] === boundingBox[1][1]
+        ) {
+          continue;
+        }
+
+        answer.values.push({
+          label: maskItem.label,
+          points: boundingBox,
+          shape_type: "mask",
+          mask_data: maskDataRle,
+          flags: {},
+        });
+      } catch (e) {
+        console.error("[commitAiMasks] Failed to process mask:", e);
+      }
+    }
+
+    updateAnswer();
+    renderAnnotations();
   });
 
   // Watch for hole drawing mode signal from question component

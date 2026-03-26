@@ -2,6 +2,10 @@ import { ref, computed, watch } from "vue-demi";
 import { useImageAnnotationSharedState } from "../../../fields/image-annotation/useImageAnnotationSharedState";
 import { Question } from "~/v1/domain/entities/question/Question";
 import { ImageAnnotationQuestionAnswer } from "~/v1/domain/entities/question/QuestionAnswer";
+import {
+  requestSegmentation,
+  type SegmentationResult,
+} from "~/v1/infrastructure/services/useAiAssistService";
 
 type Tool = "rectangle" | "polygon" | "mask";
 
@@ -212,6 +216,102 @@ export const useImageAnnotationQuestionViewModel = (props: {
     sharedState.brushMode.value = mode;
   };
 
+  // ----- AI Mask state -----
+  const aiMaskPrompt = ref("");
+  const aiMaskLoading = ref(false);
+  const aiMaskError = ref<string | null>(null);
+  const aiMaskResults = ref<SegmentationResult | null>(null);
+  const aiMaskThreshold = ref(0);
+  const aiMaskMaskThreshold = ref(0);
+  const aiMaskSelected = ref<Set<number>>(new Set());
+
+  const requestAiMask = async () => {
+    const prompt = aiMaskPrompt.value.trim();
+    if (!prompt) {
+      aiMaskError.value = "Please enter a text prompt";
+      return;
+    }
+
+    const selectedOption = answer.options.find((opt) => opt.isSelected);
+    if (!selectedOption) {
+      aiMaskError.value = "Please select a label first";
+      return;
+    }
+
+    const imageContent = sharedState.imageContent.value;
+    if (!imageContent) {
+      aiMaskError.value = "No image available";
+      return;
+    }
+
+    aiMaskLoading.value = true;
+    aiMaskError.value = null;
+    aiMaskResults.value = null;
+
+    try {
+      const result = await requestSegmentation(imageContent, {
+        text: prompt,
+        threshold: aiMaskThreshold.value,
+        maskThreshold: aiMaskMaskThreshold.value,
+      });
+
+      if (result.num_instances === 0) {
+        aiMaskError.value = "No objects found for that prompt";
+        return;
+      }
+
+      aiMaskResults.value = result;
+    } catch (e: any) {
+      aiMaskError.value = e.message || "AI mask request failed";
+    } finally {
+      aiMaskLoading.value = false;
+    }
+  };
+
+  const toggleAiMask = (maskIndex: number) => {
+    const newSet = new Set(aiMaskSelected.value);
+    if (newSet.has(maskIndex)) {
+      newSet.delete(maskIndex);
+    } else {
+      newSet.add(maskIndex);
+    }
+    aiMaskSelected.value = newSet;
+  };
+
+  const clearAiMaskSelection = () => {
+    aiMaskSelected.value = new Set();
+  };
+
+  const applySelectedAiMasks = () => {
+    if (!aiMaskResults.value || aiMaskSelected.value.size === 0) return;
+
+    const selectedOption = answer.options.find((opt) => opt.isSelected);
+    if (!selectedOption) {
+      aiMaskError.value = "Please select a label first";
+      return;
+    }
+
+    const color = selectedOption.color || answer.getAnnotationColor(selectedOption.value);
+    const masksToCommit: import("../../../fields/image-annotation/useImageAnnotationSharedState").AiMaskData[] = [];
+
+    for (const idx of aiMaskSelected.value) {
+      masksToCommit.push({
+        maskBase64: aiMaskResults.value.masks[idx],
+        label: selectedOption.value,
+        color,
+        width: 0,
+        height: 0,
+      });
+    }
+
+    sharedState.commitAiMasksData.value = masksToCommit;
+    sharedState.commitAiMasksTrigger.value++;
+
+    // Clear results and selection
+    aiMaskResults.value = null;
+    aiMaskSelected.value = new Set();
+  };
+
   return {
     selectedTool,
     hoveredAnnotation,
@@ -236,5 +336,17 @@ export const useImageAnnotationQuestionViewModel = (props: {
     isExpanded,
     onAddHole,
     deleteHole,
+    // AI Mask
+    aiMaskPrompt,
+    aiMaskLoading,
+    aiMaskError,
+    aiMaskResults,
+    aiMaskThreshold,
+    aiMaskMaskThreshold,
+    aiMaskSelected,
+    requestAiMask,
+    toggleAiMask,
+    clearAiMaskSelection,
+    applySelectedAiMasks,
   };
 };

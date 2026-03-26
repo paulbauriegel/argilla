@@ -200,7 +200,13 @@ class UpsertRecordsBulk(CreateRecordsBulk):
         await self._db.commit()
 
         await _preload_records_relationships_before_index(self._db, records)
-        await self._search_engine.index_records(dataset, records)
+        
+        # Index records in chunks to avoid Elasticsearch 429 errors
+        # Chunk size of 100 records keeps bulk payload ~5MB, well under 51MB limit
+        CHUNK_SIZE = 100
+        for i in range(0, len(records), CHUNK_SIZE):
+            chunk = records[i:i + CHUNK_SIZE]
+            await self._search_engine.index_records(dataset, chunk)
 
         await self._notify_upsert_record_events(records)
 

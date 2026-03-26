@@ -1,6 +1,14 @@
 import { ref, type Ref } from "vue-demi";
 import { ImageAnnotationQuestionAnswer } from "~/v1/domain/entities/question/QuestionAnswer";
 
+export type AiMaskData = {
+  maskBase64: string;
+  label: string;
+  color: string;
+  width: number;
+  height: number;
+};
+
 export type ImageAnnotationSharedState = {
   editModeActive: Ref<boolean>;
   currentAnnotationIndex: Ref<number | null>;
@@ -21,6 +29,12 @@ export type ImageAnnotationSharedState = {
   selectLabelTrigger: Ref<number>;
   selectLabelData: Ref<{ labelValue: string } | null>;
   holeDrawingMode: Ref<{ active: boolean; parentIndex: number | null }>;
+  // AI Mask integration
+  imageContent: Ref<string>;
+  loadAiMaskTrigger: Ref<number>;
+  loadAiMaskData: Ref<AiMaskData | null>;
+  commitAiMasksTrigger: Ref<number>;
+  commitAiMasksData: Ref<AiMaskData[] | null>;
 };
 
 const sharedStateMap = new WeakMap<
@@ -58,6 +72,12 @@ export const useImageAnnotationSharedState = (
       selectLabelTrigger: ref(0),
       selectLabelData: ref(null),
       holeDrawingMode: ref({ active: false, parentIndex: null }),
+      // AI Mask integration
+      imageContent: ref(""),
+      loadAiMaskTrigger: ref(0),
+      loadAiMaskData: ref(null),
+      commitAiMasksTrigger: ref(0),
+      commitAiMasksData: ref(null),
     };
 
     sharedStateMap.set(answer, state);

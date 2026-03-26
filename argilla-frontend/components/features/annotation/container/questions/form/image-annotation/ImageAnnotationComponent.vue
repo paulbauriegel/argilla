@@ -69,6 +69,114 @@
         </div>
       </div>
 
+      <!-- AI Mask Generation -->
+      <div class="image-annotation-question__ai-mask">
+        <h4 class="section-title">AI Mask Generation</h4>
+        <div class="ai-mask-controls">
+          <div class="ai-mask-prompt-row">
+            <input
+              type="text"
+              class="ai-mask-input"
+              v-model="aiMaskPrompt"
+              placeholder="Describe object to segment (e.g. 'dog')"
+              @keydown.stop
+              @keydown.enter="requestAiMask"
+              :disabled="aiMaskLoading"
+            />
+            <button
+              class="ai-mask-button"
+              :class="{ 'ai-mask-button--loading': aiMaskLoading }"
+              @click="requestAiMask"
+              :disabled="aiMaskLoading"
+              title="Generate AI mask"
+            >
+              <span v-if="aiMaskLoading" class="ai-mask-spinner" />
+              <span v-else>✨ Generate</span>
+            </button>
+          </div>
+
+          <!-- Threshold Controls -->
+          <details class="ai-mask-thresholds">
+            <summary class="ai-mask-thresholds__summary">Thresholds</summary>
+            <div class="ai-mask-thresholds__content">
+              <div class="ai-mask-threshold-control">
+                <label class="brush-label" title="Filters which object instances are returned. Lower = more instances (including low-confidence ones).">
+                  Confidence: <span class="brush-value">{{ aiMaskThreshold.toFixed(2) }}</span>
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  v-model.number="aiMaskThreshold"
+                  class="brush-slider"
+                  title="Filters which object instances are returned. Lower = more instances."
+                />
+              </div>
+              <div class="ai-mask-threshold-control">
+                <label class="brush-label" title="Controls the binary mask cutoff per pixel. Lower = larger/looser masks, higher = tighter masks.">
+                  Mask: <span class="brush-value">{{ aiMaskMaskThreshold.toFixed(2) }}</span>
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  v-model.number="aiMaskMaskThreshold"
+                  class="brush-slider"
+                  title="Controls the binary mask cutoff per pixel. Lower = larger masks."
+                />
+              </div>
+            </div>
+          </details>
+
+          <!-- Error Message -->
+          <div v-if="aiMaskError" class="ai-mask-error">
+            {{ aiMaskError }}
+          </div>
+
+          <!-- Mask Results Gallery -->
+          <div v-if="aiMaskResults && aiMaskResults.num_instances > 0" class="ai-mask-results">
+            <label class="brush-label">
+              Select masks ({{ aiMaskSelected.size }} selected of {{ aiMaskResults.num_instances }} found):
+            </label>
+            <div class="ai-mask-gallery">
+              <button
+                v-for="(mask, idx) in aiMaskResults.masks"
+                :key="idx"
+                class="ai-mask-thumb"
+                :class="{ 'ai-mask-thumb--selected': aiMaskSelected.has(idx) }"
+                @click="toggleAiMask(idx)"
+                :title="`Mask ${idx + 1} — score ${aiMaskResults.scores[idx].toFixed(2)}`"
+              >
+                <img
+                  :src="'data:image/png;base64,' + mask"
+                  class="ai-mask-thumb__img"
+                />
+                <span class="ai-mask-thumb__score">{{ aiMaskResults.scores[idx].toFixed(2) }}</span>
+                <span v-if="aiMaskSelected.has(idx)" class="ai-mask-thumb__check">&#10003;</span>
+              </button>
+            </div>
+            <div class="ai-mask-apply-row">
+              <button
+                class="ai-mask-button"
+                :disabled="aiMaskSelected.size === 0"
+                @click="applySelectedAiMasks"
+              >
+                Apply {{ aiMaskSelected.size }} mask{{ aiMaskSelected.size !== 1 ? 's' : '' }}
+              </button>
+              <button
+                class="ai-mask-clear-button"
+                :disabled="aiMaskSelected.size === 0"
+                @click="clearAiMaskSelection"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Label Selection - Using Span Annotation Component -->
       <div class="image-annotation-question__labels">
         <h4 class="section-title">Labels</h4>
@@ -210,6 +318,10 @@
 import { useImageAnnotationQuestionViewModel } from "./useImageAnnotationQuestionViewModel";
 import "assets/icons/close";
 import "assets/icons/pen";
+import "assets/icons/square";
+import "assets/icons/heptagon";
+import "assets/icons/brush";
+import "assets/icons/eraser";
 
 export default {
   name: "ImageAnnotationComponent",
@@ -265,7 +377,8 @@ export default {
   &__tools,
   &__labels,
   &__annotations,
-  &__brush-controls {
+  &__brush-controls,
+  &__ai-mask {
     display: flex;
     flex-direction: column;
     gap: $base-space * 1.5;
@@ -692,6 +805,226 @@ export default {
     :deep(svg) {
       fill: var(--fg-error);
     }
+  }
+}
+
+// AI Mask Controls
+.ai-mask-controls {
+  display: flex;
+  flex-direction: column;
+  gap: $base-space * 1.5;
+  padding: $base-space * 1.5;
+  background: var(--bg-opacity-8);
+  border-radius: $border-radius-s;
+}
+
+.ai-mask-prompt-row {
+  display: flex;
+  gap: $base-space;
+  align-items: stretch;
+}
+
+.ai-mask-input {
+  flex: 1;
+  padding: $base-space $base-space * 1.5;
+  border: 1px solid var(--border-field);
+  border-radius: $border-radius-s;
+  background: var(--bg-opacity-4);
+  color: var(--fg-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+
+  &::placeholder {
+    color: var(--fg-secondary);
+  }
+
+  &:focus {
+    border-color: var(--bg-brand);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.ai-mask-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: $base-space * 0.5;
+  padding: $base-space $base-space * 2;
+  background: var(--bg-brand);
+  color: white;
+  border: none;
+  border-radius: $border-radius-s;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &--loading {
+    min-width: 100px;
+  }
+}
+
+.ai-mask-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: ai-mask-spin 0.6s linear infinite;
+}
+
+@keyframes ai-mask-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ai-mask-thresholds {
+  &__summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fg-secondary);
+    user-select: none;
+    padding: $base-space * 0.5 0;
+
+    &:hover {
+      color: var(--fg-primary);
+    }
+  }
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: $base-space;
+    padding-top: $base-space;
+  }
+}
+
+.ai-mask-threshold-control {
+  display: flex;
+  flex-direction: column;
+  gap: $base-space * 0.5;
+}
+
+.ai-mask-error {
+  padding: $base-space;
+  background: rgba(220, 53, 69, 0.1);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  border-radius: $border-radius-s;
+  color: var(--fg-error, #dc3545);
+  font-size: 12px;
+}
+
+.ai-mask-results {
+  display: flex;
+  flex-direction: column;
+  gap: $base-space;
+}
+
+.ai-mask-gallery {
+  display: flex;
+  gap: $base-space;
+  overflow-x: auto;
+  padding: $base-space * 0.5 0;
+}
+
+.ai-mask-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 80px;
+  height: 80px;
+  border: 2px solid var(--border-field);
+  border-radius: $border-radius-s;
+  background: #000;
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+  transition: border-color 0.2s, transform 0.15s;
+
+  &:hover {
+    border-color: var(--bg-brand);
+    transform: scale(1.05);
+  }
+
+  &__img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  &__score {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  &__check {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    background: var(--bg-brand);
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    border-radius: 50%;
+  }
+
+  &--selected {
+    border-color: var(--bg-brand);
+    box-shadow: 0 0 0 2px var(--bg-brand);
+  }
+}
+
+.ai-mask-apply-row {
+  display: flex;
+  gap: $base-space;
+  align-items: center;
+}
+
+.ai-mask-clear-button {
+  padding: $base-space $base-space * 1.5;
+  background: transparent;
+  color: var(--fg-secondary);
+  border: 1px solid var(--border-field);
+  border-radius: $border-radius-s;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    color: var(--fg-primary);
+    border-color: var(--fg-secondary);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 }
 </style>

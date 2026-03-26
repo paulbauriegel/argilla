@@ -238,6 +238,7 @@ const config: NuxtConfig = {
     documentationSite: "https://docs.argilla.io/",
     documentationPersistentStorage:
       "https://docs.argilla.io/latest/getting_started/how-to-configure-argilla-on-huggingface/#persistent-storage",
+    aiAssistBaseUrl: process.env.AI_ASSIST_BASE_URL || "http://localhost:6950",
   },
 };
 export default config;

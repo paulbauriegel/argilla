@@ -166,19 +166,70 @@ export class MaskInteraction implements ToolInteraction {
   /**
    * Load existing mask data onto the off-screen canvas so the user can
    * continue drawing/erasing on a previously saved mask.
+   * Supports both "rle" and "png_base64" formats.
    */
   loadMaskData(maskData: MaskData): void {
-    if (maskData.format !== "rle") return;
-
-    // Parse the hex color to RGB for the decoded canvas
+    // Parse the hex color to RGB for tinting
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(this.color);
     const rgb = result
       ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) }
       : undefined;
 
-    const decoded = decodeMaskRLEToCanvas(maskData, rgb);
-    this.maskCtx.drawImage(decoded, 0, 0);
-    this.updatePreview();
+    if (maskData.format === "rle") {
+      const decoded = decodeMaskRLEToCanvas(maskData, rgb);
+      this.maskCtx.drawImage(decoded, 0, 0);
+      this.updatePreview();
+    } else if (maskData.format === "png_base64") {
+      this.loadPngBase64Mask(maskData.data, rgb);
+    }
+  }
+
+  /**
+   * Load a base64-encoded PNG mask onto the off-screen canvas.
+   * The PNG is expected to be a grayscale/alpha mask from the AI backend.
+   */
+  private loadPngBase64Mask(
+    base64Data: string,
+    tint?: { r: number; g: number; b: number }
+  ): void {
+    const img = new Image();
+    img.onload = () => {
+      // Draw the PNG onto a temporary canvas to read pixel data
+      const tmpCanvas = document.createElement("canvas");
+      tmpCanvas.width = this.imgNaturalW;
+      tmpCanvas.height = this.imgNaturalH;
+      const tmpCtx = tmpCanvas.getContext("2d");
+      if (!tmpCtx) return;
+
+      tmpCtx.drawImage(img, 0, 0, this.imgNaturalW, this.imgNaturalH);
+
+      // Read pixel data – the backend mask is a grayscale PNG where
+      // white (255) = mask, black (0) = background. We tint it with
+      // the label color and use the luminance as alpha.
+      const srcData = tmpCtx.getImageData(0, 0, this.imgNaturalW, this.imgNaturalH);
+      const dstData = this.maskCtx.createImageData(this.imgNaturalW, this.imgNaturalH);
+
+      const r = tint?.r ?? 255;
+      const g = tint?.g ?? 255;
+      const b = tint?.b ?? 255;
+
+      for (let i = 0; i < srcData.data.length; i += 4) {
+        // Use the max of RGB channels (or alpha if present) as mask value
+        const maskVal = Math.max(
+          srcData.data[i],
+          srcData.data[i + 1],
+          srcData.data[i + 2]
+        );
+        dstData.data[i] = r;
+        dstData.data[i + 1] = g;
+        dstData.data[i + 2] = b;
+        dstData.data[i + 3] = maskVal;
+      }
+
+      this.maskCtx.putImageData(dstData, 0, 0);
+      this.updatePreview();
+    };
+    img.src = `data:image/png;base64,${base64Data}`;
   }
 
   /* ------------------------------------------------------------------ */
